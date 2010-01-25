@@ -1,7 +1,13 @@
 <?php
 /**
  * PHP LDAP CLASS FOR MANIPULATING ACTIVE DIRECTORY 
- * Version 3.3.1
+ * Version 3.3.1 - Paging Branch
+ * 
+ * IMPORTANT NOTE ABOUT THIS BRANCH
+ * --------------------------------
+ * See http://adldap.sourceforge.net/wiki/doku.php?id=api_pagingsupport
+ * If you are not running a patched ext/ldap then this will NOT work!
+ * --------------------------------
  * 
  * PHP Version 5 with SSL and LDAP support
  * 
@@ -30,7 +36,7 @@
  * @copyright (c) 2006-2010 Scott Barnett, Richard Hyland
  * @license http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html LGPLv2.1
  * @revision $Revision$
- * @version 3.3.1
+ * @version 3.3.1 - Paging Branch
  * @link http://adldap.sourceforge.net/
  */
 
@@ -126,6 +132,13 @@ class adLDAP {
     * @var bool
     */
 	protected $_recursive_groups=true;
+    
+    /**
+    * The maximum number of results to bring back in a page
+    * 
+    * @var int
+    */
+    protected $_page_size = 100;
 	
 	// You should not need to edit anything below this line
 	//******************************************************************************************
@@ -310,6 +323,26 @@ class adLDAP {
     {
           return $this->_recursive_groups;
     }
+    
+    /**
+    * Set the maximum page size
+    * 
+    * @param int $_page_size
+    */
+    public function set_page_size($_page_size)
+    {
+        $this->_page_size = $_page_size;    
+    }
+    
+    /**
+    * Get the maximum page size
+    * 
+    * @return int
+    */
+    public function get_page_size()
+    {
+        return $this->_page_size;   
+    }
 
     /**
     * Default Constructor
@@ -332,6 +365,7 @@ class adLDAP {
             if (array_key_exists("use_ssl",$options)){ $this->_use_ssl=$options["use_ssl"]; }
             if (array_key_exists("use_tls",$options)){ $this->_use_tls=$options["use_tls"]; }
             if (array_key_exists("recursive_groups",$options)){ $this->_recursive_groups=$options["recursive_groups"]; }
+            if (array_key_exists("page_size",$options)){ $this->_page_size=$options["page_size"]; }
         }
         
         if ($this->ldap_supported() === false) {
@@ -691,32 +725,46 @@ class adLDAP {
         for ($i=0; $i<$users["count"]; $i++){ 
              $filter="(&(objectCategory=person)(distinguishedName=".$this->ldap_slashes($users[$i])."))";
              $fields = array("samaccountname", "distinguishedname", "objectClass");
-             $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);
-             $entries = ldap_get_entries($this->_conn, $sr);
+             
+             
+             $controls = $this->setupPageControls();
+             $continue = true;
+             while ($continue) {
+                $this->serverPageControl($controls);
+                $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields); 
+                ldap_parse_result ($this->_conn, $sr, $errcode, $matcheddn, $errmsg, $referrals, $serverctrls);
+                if ($errcode > 0) { $continue = false;  }
+                $controls = $this->updatePageControls($serverctrls);
+            
+                $entries = ldap_get_entries($this->_conn, $sr);
+                if (!is_array($entries) || sizeof($entries) == 0) { $continue = false; }
+                if ($entries["count"] < $this->_page_size) { $continue = false; }
 
-             // not a person, look for a group  
-             if ($entries['count'] == 0 && $recursive == true) {  
-                $filter="(&(objectCategory=group)(distinguishedName=".$this->ldap_slashes($users[$i])."))";  
-                $fields = array("samaccountname");  
-                $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);  
-                $entries = ldap_get_entries($this->_conn, $sr);  
-                if (!isset($entries[0]['samaccountname'][0])) {
+                // not a person, look for a group  
+                 if ($entries['count'] == 0 && $recursive == true) {  
+                    $filter="(&(objectCategory=group)(distinguishedName=".$this->ldap_slashes($users[$i])."))";  
+                    $fields = array("samaccountname");  
+                    $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);  
+                    $entries = ldap_get_entries($this->_conn, $sr);  
+                    if (!isset($entries[0]['samaccountname'][0])) {
+                        continue;  
+                    }
+                    $sub_users = $this->group_members($entries[0]['samaccountname'][0], $recursive);  
+                    if (is_array($sub_users)) {
+                        $user_array = array_merge($user_array, $sub_users); 
+                        $user_array = array_unique($user_array);  
+                    }
                     continue;  
-                }
-                $sub_users = $this->group_members($entries[0]['samaccountname'][0], $recursive);  
-                if (is_array($sub_users)) {
-                    $user_array = array_merge($user_array, $sub_users); 
-                    $user_array = array_unique($user_array);  
-                }
-                continue;  
-             } 
+                 } 
 
-             if ($entries[0]['samaccountname'][0] === NULL && $entries[0]['distinguishedname'][0] !== NULL) {
-                 $user_array[] = $entries[0]['distinguishedname'][0];
-             }
-             elseif ($entries[0]['samaccountname'][0] !== NULL) {
-                $user_array[] = $entries[0]['samaccountname'][0];
-             }
+                 if ($entries[0]['samaccountname'][0] === NULL && $entries[0]['distinguishedname'][0] !== NULL) {
+                     $user_array[] = $entries[0]['distinguishedname'][0];
+                 }
+                 elseif ($entries[0]['samaccountname'][0] !== NULL) {
+                    $user_array[] = $entries[0]['samaccountname'][0];
+                 }
+                
+            } 
         }
         return ($user_array);
     }
@@ -792,25 +840,38 @@ class adLDAP {
             $filter .= '(samaccounttype='. $samaccounttype .')';
         }
         $filter .= '(cn='.$search.'))';
-        // Perform the search and grab all their details
-        $fields=array("samaccountname","description");
-        $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);
-        $entries = ldap_get_entries($this->_conn, $sr);
-
+        
         $groups_array = array();        
-        for ($i=0; $i<$entries["count"]; $i++){
-            if ($include_desc && strlen($entries[$i]["description"][0]) > 0 ){
-                $groups_array[ $entries[$i]["samaccountname"][0] ] = $entries[$i]["description"][0];
-            } elseif ($include_desc){
-                $groups_array[ $entries[$i]["samaccountname"][0] ] = $entries[$i]["samaccountname"][0];
-            } else {
-                array_push($groups_array, $entries[$i]["samaccountname"][0]);
+        
+        $controls = $this->setupPageControls();
+        $continue = true;
+        while ($continue) {
+            $this->serverPageControl($controls);
+            // Perform the search and grab all their details
+            $fields=array("samaccountname","description");
+            $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);
+            ldap_parse_result ($this->_conn, $sr, $errcode, $matcheddn, $errmsg, $referrals, $serverctrls);
+            if ($errcode > 0) { $continue = false;  }
+            $controls = $this->updatePageControls($serverctrls);
+            
+            $entries = ldap_get_entries($this->_conn, $sr);
+            if (!is_array($entries) || sizeof($entries) == 0) { $continue = false; }
+            if ($entries["count"] < $this->_page_size) { $continue = false; }
+
+            for ($i=0; $i<$entries["count"]; $i++){
+                if ($include_desc && strlen($entries[$i]["description"][0]) > 0 ){
+                    $groups_array[ $entries[$i]["samaccountname"][0] ] = $entries[$i]["description"][0];
+                } elseif ($include_desc){
+                    $groups_array[ $entries[$i]["samaccountname"][0] ] = $entries[$i]["samaccountname"][0];
+                } else {
+                    array_push($groups_array, $entries[$i]["samaccountname"][0]);
+                }
             }
         }
         if( $sorted ){ asort($groups_array); }
         return ($groups_array);
     }
-    
+            
     /**
     * Returns a complete list of all groups in AD
     * 
@@ -1196,17 +1257,30 @@ class adLDAP {
         // Perform the search and grab all their details
         $filter = "(&(objectClass=user)(samaccounttype=". ADLDAP_NORMAL_ACCOUNT .")(objectCategory=person)(cn=".$search."))";
         $fields=array("samaccountname","displayname");
-        $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);
-        $entries = ldap_get_entries($this->_conn, $sr);
+        
+        $users_array = array(); 
+        
+        $controls = $this->setupPageControls();
+        $continue = true;
+        while ($continue) {
+            $this->serverPageControl($controls);
+            $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);
+            ldap_parse_result ($this->_conn, $sr, $errcode, $matcheddn, $errmsg, $referrals, $serverctrls);
+            if ($errcode > 0) { $continue = false;  }
+            $controls = $this->updatePageControls($serverctrls);
+            
+            $entries = ldap_get_entries($this->_conn, $sr);
+            if (!is_array($entries) || sizeof($entries) == 0) { $continue = false; }
+            if ($entries["count"] < $this->_page_size) { $continue = false; }
 
-        $users_array = array();
-        for ($i=0; $i<$entries["count"]; $i++){
-            if ($include_desc && strlen($entries[$i]["displayname"][0])>0){
-                $users_array[ $entries[$i]["samaccountname"][0] ] = $entries[$i]["displayname"][0];
-            } elseif ($include_desc){
-                $users_array[ $entries[$i]["samaccountname"][0] ] = $entries[$i]["samaccountname"][0];
-            } else {
-                array_push($users_array, $entries[$i]["samaccountname"][0]);
+            for ($i=0; $i<$entries["count"]; $i++){
+                if ($include_desc && strlen($entries[$i]["displayname"][0])>0){
+                    $users_array[ $entries[$i]["samaccountname"][0] ] = $entries[$i]["displayname"][0];
+                } elseif ($include_desc){
+                    $users_array[ $entries[$i]["samaccountname"][0] ] = $entries[$i]["samaccountname"][0];
+                } else {
+                    array_push($users_array, $entries[$i]["samaccountname"][0]);
+                }
             }
         }
         if ($sorted){ asort($users_array); }
@@ -1432,18 +1506,31 @@ class adLDAP {
         
         // Perform the search and grab all their details
         $filter = "(&(objectClass=contact)(cn=".$search."))";
-        $fields=array("displayname","distinguishedname");           
-        $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);
-        $entries = ldap_get_entries($this->_conn, $sr);
-
+        $fields=array("displayname","distinguishedname"); 
+        
         $users_array = array();
-        for ($i=0; $i<$entries["count"]; $i++){
-            if ($include_desc && strlen($entries[$i]["displayname"][0])>0){
-                $users_array[ $entries[$i]["distinguishedname"][0] ] = $entries[$i]["displayname"][0];
-            } elseif ($include_desc){
-                $users_array[ $entries[$i]["distinguishedname"][0] ] = $entries[$i]["distinguishedname"][0];
-            } else {
-                array_push($users_array, $entries[$i]["distinguishedname"][0]);
+        
+        $controls = $this->setupPageControls();
+        $continue = true;
+        while ($continue) {
+            $this->serverPageControl($controls);
+            $sr=ldap_search($this->_conn,$this->_base_dn,$filter,$fields);
+            ldap_parse_result ($this->_conn, $sr, $errcode, $matcheddn, $errmsg, $referrals, $serverctrls);
+            if ($errcode > 0) { $continue = false;  }
+            $controls = $this->updatePageControls($serverctrls);
+            
+            $entries = ldap_get_entries($this->_conn, $sr);
+            if (!is_array($entries) || sizeof($entries) == 0) { $continue = false; }
+            if ($entries["count"] < $this->_page_size) { $continue = false; }
+
+            for ($i=0; $i<$entries["count"]; $i++){
+                if ($include_desc && strlen($entries[$i]["displayname"][0])>0){
+                    $users_array[ $entries[$i]["distinguishedname"][0] ] = $entries[$i]["displayname"][0];
+                } elseif ($include_desc){
+                    $users_array[ $entries[$i]["distinguishedname"][0] ] = $entries[$i]["distinguishedname"][0];
+                } else {
+                    array_push($users_array, $entries[$i]["distinguishedname"][0]);
+                }
             }
         }
         if ($sorted){ asort($users_array); }
@@ -2360,6 +2447,50 @@ class adLDAP {
             $item = utf8_encode($item);   
         }
     }    
+    
+    /**
+    * Configure the page controls parameter
+    * 
+    * @return array
+    */
+    protected function setupPageControls() {
+        $page_control = array(
+            'oid'        => '1.2.840.113556.1.4.319',
+            'iscritical' => true,
+            'value'      => sprintf ("%c%c%c%c%c%c%c", 48, 5, 2, 1, $this->_page_size, 4, 0)
+
+        );
+        return array($page_control);   
+    }
+    
+    /**
+    * Tell the Domain Controller server to use a specific page
+    * 
+    * @param mixed $controls
+    */
+    protected function serverPageControl($controls) {
+        ldap_set_option($this->_conn, LDAP_OPT_SERVER_CONTROLS, $controls);   
+    }
+    
+    /**
+    * Update the server controls with the current page size
+    * 
+    * @param array $serverctrls
+    * @return array
+    */
+    protected function updatePageControls($serverctrls) {
+        if (isset($serverctrls) and $serverctrls !== null) {
+            foreach ($serverctrls as $i) {
+                if ($i["oid"] == '1.2.840.113556.1.4.319') {
+                    $i["value"]{8}   = chr($this->_page_size);
+                    $i["iscritical"] = true;
+                    $controls        = array($i);
+                    break;
+                }
+            }
+        }   
+        return $controls;
+    }
 }
 
 /**

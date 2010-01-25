@@ -1,5 +1,5 @@
 PHP LDAP CLASS FOR MANIPULATING ACTIVE DIRECTORY
-Version 3.3.1
+Version 3.3.1 - Paging Branch
 
 Written by Scott Barnett, Richard Hyland
 email: scott@wiggumworld.com, adldap@richardhyland.com
@@ -16,6 +16,16 @@ include directives in the scripts.
 
 The examples should be pretty self explanatory. If you require more
 information, please visit http://adldap.sourceforge.net/
+
+-------------------
+BRANCH WARNING
+
+Please note this branch is used at your own risk. 
+The developers of adLDAP will under no circumstances be held responsible for any modifications you make to your source code
+
+You MUST have a patched version of ext/ldap in PHP to use this branch.
+
+See http://adldap.sourceforge.net/wiki/doku.php?id=api_pagingsupport for more information
 
 -------------------
 

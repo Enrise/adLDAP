@@ -8,8 +8,9 @@ http://adldap.sourceforge.net/
 CHANGELOG
 -------------------------------------------------------------------------------------------
 
-Trunk Commits
+Branch Commits
 -------------
+[+] New feature: Paging support on many functions.  Note you must have a custom compiled PHP with ext/ldap patched to use this branch.  See http://adldap.sourceforge.net/wiki/doku.php?id=api_pagingsupport
 [+] New feature: Move the user to a new OU using user_move() function
 [-] Bug fix: Prevent an 'undefined index' error in recursive_groups() when full PHP E_ALL logging is enabled
 [-] Bug fix: user_groups() does not return primary group when objectsid is not given (Tracker ID:2931213)
