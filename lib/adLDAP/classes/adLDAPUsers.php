@@ -239,7 +239,10 @@ class adLDAPUsers {
         }
         $sr = ldap_search($this->adldap->getLdapConnection(), $this->adldap->getBaseDn(), $filter, $fields);
         if ($sr === false) {
-            throw new \Exception('ldap_search returned false instead of expected resultset. Most likely administrator credentials are incorrect.');
+            throw new \adLDAP\adLDAPException(
+                'ldap_search returned false instead of expected resultset. ' .
+                'Most likely administrator credentials are incorrect.'
+            );
         }
         $entries = ldap_get_entries($this->adldap->getLdapConnection(), $sr);
         
