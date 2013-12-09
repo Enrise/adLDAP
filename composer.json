@@ -1,5 +1,5 @@
 {
-    "name": "adldap/adldap",
+    "name": "enrise/adldap",
     "type": "library",
     "description": "adLDAP, low-level library to query Active directory",
     "keywords": ["active directory","ldap","windows"],
@@ -7,8 +7,11 @@
     "license": "GNU",
     "authors": [
         {
-            "name": "Richard Hyland"
+            "name": "Richard Hyland",
+        },{
+            "name": "Rob Quist",
         }
+
     ],
     "require": {
         "php": ">=5.2.4",
