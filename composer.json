@@ -7,9 +7,9 @@
     "license": "GNU",
     "authors": [
         {
-            "name": "Richard Hyland",
-        },{
-            "name": "Rob Quist",
+            "name": "Richard Hyland"
+        }, {
+            "name": "Rob Quist"
         }
 
     ],
